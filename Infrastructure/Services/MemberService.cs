@@ -5,6 +5,7 @@ using Infrastructure.APIResponce;
 using Infrastructure.Data;
 using Infrastructure.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Infrastructure.Services;
 
@@ -42,9 +43,9 @@ public class MemberService : IMemberService
     public async Task<Responce<string>> DeleteItemAsync(int id)
     {
         var exist = await _context.Members.FindAsync(id);
-        if (exist == null) return Responce<string>.Fail(404, "memberto delete not found");
+        if (exist == null) return Responce<string>.Fail(404, "Member to delete not found");
 
-        var find = await _context.BorrowRecords.FirstOrDefaultAsync(br => br.MemberId == id);
+        var find = await _context.BorrowRecords.FirstOrDefaultAsync(br => br.MemberId == id && br.ReturnDate>DateTime.Now);
         if (find != null) return Responce<string>.Fail(409, "Cannot delete member because od borrowing");
 
         _context.Members.Remove(exist);
@@ -54,28 +55,85 @@ public class MemberService : IMemberService
                 : Responce<string>.Created("Deleted successfuly");
     }
 
-    public Task<Responce<MemberGetDto>> GetItemByIdAsync(int id)
+    public async Task<Responce<MemberGetDto>> GetItemByIdAsync(int id)
     {
-        throw new NotImplementedException();
+        var exist = await _context.Members.FindAsync(id);
+        if (exist == null) return Responce<MemberGetDto>.Fail(404, $"Member with this id {id} doesn exist");
+
+        var convert = new MemberGetDto()
+        {
+            Id = exist.Id,
+            Name = exist.Name,
+            Email = exist.Email,
+            MemberShip = exist.MemberShip
+        };
+        return Responce<MemberGetDto>.Ok(convert);
     }
 
-    public Task<Responce<List<MemberGetDto>>> GetItemsAsync()
+    public async Task<Responce<List<MemberGetDto>>> GetItemsAsync()
     {
-        throw new NotImplementedException();
+        var items = await _context.Members.Select(m => new MemberGetDto()
+        {
+            Id = m.Id,
+            Name = m.Name,
+            Email = m.Email,
+            MemberShip = m.MemberShip
+        }).ToListAsync();
+        return Responce<List<MemberGetDto>>.Ok(items);
     }
 
-    public Task<Responce<List<MemberGetDto>>> GetMembersWithRecentBorrows(int years)
+    public async Task<Responce<List<MemberGetDto>>> GetMembersWithRecentBorrows(int days)
     {
-        throw new NotImplementedException();
+        var since = DateTime.Now.AddDays(-days);
+        var items = await _context.Members.Where(m => m.BorrowRecords.Any(br => br.ReturnDate != null && br.ReturnDate >= since))
+        .Select(m => new MemberGetDto()
+        {
+            Id = m.Id,
+            Name = m.Name,
+            Email = m.Email,
+            MemberShip = m.MemberShip
+        }).ToListAsync();
+        return Responce<List<MemberGetDto>>.Ok(items);
     }
 
-    public Task<Responce<List<MemberGetDto>>> GetTopNMembersByBorrows(int n)
+    public async Task<Responce<List<MemberGetDto>>> GetTopNMembersByBorrows(int n)
     {
-        throw new NotImplementedException();
+
+        var items = await _context.Members
+        .OrderByDescending(m => m.BorrowRecords.Count)
+        .Take(n)
+        .Select(m => new MemberGetDto
+        {
+            Id = m.Id,
+            Name = m.Name,
+            Email = m.Email,
+            MemberShip = m.MemberShip
+        })
+        .ToListAsync();
+        return Responce<List<MemberGetDto>>.Ok(items);
     }
 
-    public Task<Responce<string>> UpdateItemAsync(int id, MemberUpdateDto dto)
+    public async Task<Responce<string>> UpdateItemAsync(int id, MemberUpdateDto dto)
     {
-        throw new NotImplementedException();
+        if (string.IsNullOrWhiteSpace(dto.Name)) return Responce<string>.Fail(409, "Name is required");
+        if (string.IsNullOrWhiteSpace(dto.Email)) return Responce<string>.Fail(409, "Email is required");
+
+        if (dto.Name.Trim().Length > 150) return Responce<string>.Fail(401, "Name must have less than 150 characters");
+        if (dto.Email.Trim().Length > 200) return Responce<string>.Fail(401, "Email must have less than 200 characters");
+
+        var exist = await _context.Members.FindAsync(id);
+        if (exist == null) return Responce<string>.Fail(409, "Member to update doesnt exist");
+
+        var noChange = exist.Name == dto.Name && exist.Email == dto.Email;
+        if (noChange) return Responce<string>.Fail(400, "No changes were made");
+
+        exist.Name = dto.Name;
+        exist.Email = dto.Email;
+
+         var result = await _context.SaveChangesAsync();
+         return result == 0
+               ? Responce<string>.Fail(500, "Not updated")
+               : Responce<string>.Created("Updated successfuly");
+        
     }
 }
